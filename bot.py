@@ -9,6 +9,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from aiohttp import web
+from telegram import BotCommand
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.constants import ChatAction
 from telegram.ext import (
@@ -136,6 +137,11 @@ TEXT = {
         "kk": "Командалар:\n/start - жаңа резюме жасау\n/skip - фотоны өткізіп жіберу\n/cancel - ағымдағы диалогты тоқтату\n/help - көмек\n\nБот интерфейсті қазақша, орысша немесе ағылшынша көрсетеді, мәтінді 3 тілге аударады және PDF жібереді.",
         "ru": "Команды:\n/start - создать новое резюме\n/skip - пропустить фото\n/cancel - отменить текущий диалог\n/help - помощь\n\nБот показывает интерфейс на казахском, русском или английском, переводит текст на 3 языка и отправляет PDF.",
         "en": "Commands:\n/start - create a new resume\n/skip - skip the photo\n/cancel - cancel the current dialog\n/help - help\n\nThe bot shows the interface in Kazakh, Russian or English, translates text into 3 languages and sends a PDF.",
+    },
+    "unknown_command": {
+        "kk": "Бұл команданы түсінбедім. Жаңа резюме үшін /start жіберіңіз немесе /help ашыңыз.",
+        "ru": "Я не понял эту команду. Отправь /start для нового резюме или /help для подсказки.",
+        "en": "I did not understand this command. Send /start for a new resume or /help for guidance.",
     },
 }
 
@@ -381,8 +387,14 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return ConversationHandler.END
 
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | None:
     await update.message.reply_text(_t("help", _ui_lang(context)))
+    return _state_from_user_data(context)
+
+
+async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int | None:
+    await update.message.reply_text(_t("unknown_command", _ui_lang(context)))
+    return _state_from_user_data(context)
 
 
 def _build_pdf(user_data: dict, user_id: int) -> Path:
@@ -421,6 +433,16 @@ def _current_field_index(context: ContextTypes.DEFAULT_TYPE) -> int:
     return int(context.user_data.get("field_index", 0))
 
 
+def _state_from_user_data(context: ContextTypes.DEFAULT_TYPE) -> int | None:
+    if "field_index" in context.user_data:
+        return _field_state(_current_field_index(context))
+    if "template" in context.user_data:
+        return PHOTO
+    if "ui_lang" in context.user_data:
+        return TEMPLATE
+    return None
+
+
 def _ui_lang(context: ContextTypes.DEFAULT_TYPE) -> str:
     return str(context.user_data.get("ui_lang", "ru"))
 
@@ -445,7 +467,7 @@ def _template_buttons(language: str) -> list[list[str]]:
 
 
 def build_application(token: str) -> Application:
-    app = Application.builder().token(token).build()
+    app = Application.builder().token(token).post_init(_set_bot_menu).build()
 
     field_states = {
         _field_state(index): [MessageHandler(filters.TEXT & ~filters.COMMAND, field_answer)]
@@ -463,11 +485,17 @@ def build_application(token: str) -> Application:
             ],
             **field_states,
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("start", start),
+            CommandHandler("help", help_command),
+            CommandHandler("cancel", cancel),
+            MessageHandler(filters.COMMAND, unknown_command),
+        ],
     )
 
     app.add_handler(conversation)
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
     return app
 
 
@@ -509,11 +537,12 @@ async def _run_webhook(application: Application, token: str) -> None:
         raise RuntimeError("WEBHOOK_URL must start with https://")
 
     await application.initialize()
+    await _set_bot_menu(application)
     await application.start()
     await application.bot.set_webhook(
         url=webhook_url,
         allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True,
+        drop_pending_updates=False,
         secret_token=webhook_secret,
     )
 
@@ -544,6 +573,17 @@ async def _run_webhook(application: Application, token: str) -> None:
         await runner.cleanup()
         await application.stop()
         await application.shutdown()
+
+
+async def _set_bot_menu(application: Application) -> None:
+    await application.bot.set_my_commands(
+        [
+            BotCommand("start", "Создать новое резюме / New resume"),
+            BotCommand("help", "Помощь / Help"),
+            BotCommand("cancel", "Отменить текущий диалог / Cancel"),
+            BotCommand("skip", "Пропустить фото / Skip photo"),
+        ]
+    )
 
 
 if __name__ == "__main__":
