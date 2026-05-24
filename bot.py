@@ -72,6 +72,33 @@ TEMPLATE_BY_LABEL = {
 }
 TEMPLATE_BY_LABEL.update({label.lower(): key for key, label in TEMPLATES.items()})
 
+BOT_COMMANDS = {
+    None: [
+        BotCommand("start", "Жаңа резюме / Новое резюме / New resume"),
+        BotCommand("help", "Көмек / Помощь / Help"),
+        BotCommand("cancel", "Тоқтату / Отменить / Cancel"),
+        BotCommand("skip", "Фото өткізу / Пропустить фото / Skip photo"),
+    ],
+    "kk": [
+        BotCommand("start", "Жаңа резюме жасау"),
+        BotCommand("help", "Көмек және командалар"),
+        BotCommand("cancel", "Ағымдағы диалогты тоқтату"),
+        BotCommand("skip", "Фотоны өткізіп жіберу"),
+    ],
+    "ru": [
+        BotCommand("start", "Создать новое резюме"),
+        BotCommand("help", "Помощь и команды"),
+        BotCommand("cancel", "Отменить текущий диалог"),
+        BotCommand("skip", "Пропустить фото"),
+    ],
+    "en": [
+        BotCommand("start", "Create a new resume"),
+        BotCommand("help", "Help and commands"),
+        BotCommand("cancel", "Cancel the current dialog"),
+        BotCommand("skip", "Skip the photo"),
+    ],
+}
+
 TEXT = {
     "choose_language": (
         "Интерфейс тілін таңдаңыз.\n"
@@ -576,14 +603,9 @@ async def _run_webhook(application: Application, token: str) -> None:
 
 
 async def _set_bot_menu(application: Application) -> None:
-    await application.bot.set_my_commands(
-        [
-            BotCommand("start", "Создать новое резюме / New resume"),
-            BotCommand("help", "Помощь / Help"),
-            BotCommand("cancel", "Отменить текущий диалог / Cancel"),
-            BotCommand("skip", "Пропустить фото / Skip photo"),
-        ]
-    )
+    for language_code, commands in BOT_COMMANDS.items():
+        kwargs = {"language_code": language_code} if language_code else {}
+        await application.bot.set_my_commands(commands, **kwargs)
 
 
 if __name__ == "__main__":
