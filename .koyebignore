@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+data/
+*.log
+*.pdf
+*.png
+*.jpg
+*.jpeg
+.DS_Store
+design_template_concepts.py
+design_template_references.py
