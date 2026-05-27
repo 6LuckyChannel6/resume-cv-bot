@@ -4,11 +4,12 @@ import asyncio
 import hashlib
 import logging
 import os
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
-from aiohttp import web
+from aiohttp import ClientError, ClientSession, web
 from telegram import BotCommand
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
 from telegram.constants import ChatAction
@@ -495,6 +496,7 @@ def _template_buttons(language: str) -> list[list[str]]:
 
 def build_application(token: str) -> Application:
     app = Application.builder().token(token).post_init(_set_bot_menu).build()
+    app.add_error_handler(error_handler)
 
     field_states = {
         _field_state(index): [MessageHandler(filters.TEXT & ~filters.COMMAND, field_answer)]
@@ -524,6 +526,10 @@ def build_application(token: str) -> Application:
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
     return app
+
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.exception("Unhandled bot error while processing update=%r", update, exc_info=context.error)
 
 
 def main() -> None:
@@ -593,10 +599,14 @@ async def _run_webhook(application: Application, token: str) -> None:
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     logger.info("Webhook server started on port %s", port)
+    keepalive_task = asyncio.create_task(_keepalive_loop(webhook_url))
 
     try:
         await asyncio.Event().wait()
     finally:
+        keepalive_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await keepalive_task
         await runner.cleanup()
         await application.stop()
         await application.shutdown()
@@ -606,6 +616,30 @@ async def _set_bot_menu(application: Application) -> None:
     for language_code, commands in BOT_COMMANDS.items():
         kwargs = {"language_code": language_code} if language_code else {}
         await application.bot.set_my_commands(commands, **kwargs)
+
+
+async def _keepalive_loop(webhook_url: str) -> None:
+    interval = int(os.getenv("KEEPALIVE_INTERVAL_SECONDS", "480"))
+    if interval <= 0:
+        logger.info("Self keepalive disabled")
+        return
+
+    public_base_url = _public_base_url(webhook_url)
+    health_url = os.getenv("KEEPALIVE_URL") or f"{public_base_url}/health"
+    await asyncio.sleep(interval)
+    async with ClientSession() as session:
+        while True:
+            try:
+                async with session.get(health_url, timeout=30) as response:
+                    logger.info("Self keepalive ping %s -> %s", health_url, response.status)
+            except (asyncio.TimeoutError, ClientError) as exc:
+                logger.warning("Self keepalive ping failed: %s", exc)
+            await asyncio.sleep(interval)
+
+
+def _public_base_url(webhook_url: str) -> str:
+    marker = "/telegram/"
+    return webhook_url.split(marker, 1)[0] if marker in webhook_url else webhook_url.rstrip("/")
 
 
 if __name__ == "__main__":
